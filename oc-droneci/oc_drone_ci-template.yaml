@@ -1,0 +1,198 @@
+kind: Template
+apiVersion: template.openshift.io/v1
+metadata:
+  name: drone-ci-gitea
+  annotations:
+    description: The Drone CI/CD Server(Gitea).
+    tags: instant-app,drone_ci
+labels:
+  application: drone_ci
+message: A Drone CI Server has been created in your project.
+objects:
+- kind: Service
+  apiVersion: v1
+  metadata:
+    annotations:
+      description: The Drone CI server's http port
+    labels:
+      app: ${DRONE_SERVICE_NAME}
+    name: ${DRONE_SERVICE_NAME}
+  spec:
+    ports:
+    - name: 8000-tcp
+      port: 8000
+      protocol: TCP
+      targetPort: 8000
+    - name: 9000-tcp
+      port: 9000
+      protocol: TCP
+      targetPort: 9000
+    selector:
+      app: ${DRONE_SERVICE_NAME}
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- kind: Route
+  apiVersion: v1
+  id: ${DRONE_SERVICE_NAME}-http
+  metadata:
+    annotations:
+      description: Route for Drone CI http service.
+    labels:
+      app: ${DRONE_SERVICE_NAME}
+    name: ${DRONE_SERVICE_NAME}
+  spec:
+    host: ${DRONE_HOST}
+    port:
+      targetPort: 8000-tcp
+    tls:
+      insecureEdgeTerminationPolicy: Redirect
+      termination: edge
+    to: 
+      kind: Service
+      name: ${DRONE_SERVICE_NAME}
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    labels:
+        app: ${DRONE_SERVICE_NAME}
+    name: ${DRONE_SERVICE_NAME}
+  spec:
+    replicas: 1
+    selector:
+      app: ${DRONE_SERVICE_NAME}
+    strategy:
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        labels:
+          app: ${DRONE_SERVICE_NAME}
+          name: ${DRONE_SERVICE_NAME}
+      spec:
+        containers:
+        - name: ${DRONE_SERVICE_NAME}
+          image: "${DRONE_IMAGE}:${DRONE_VERSION}"
+          ports:
+          - containerPort: 8000
+            protocol: TCP
+          - containerPort: 9000
+            protocol: TCP
+          imagePullPolicy: Always
+          env:
+            - name: DRONE_HOST
+              value: "https://${DRONE_HOST}"
+            - name: DRONE_OPEN
+              value: "true"
+            - name: DRONE_GITEA
+              value: "true"
+            - name: DRONE_GITEA_URL
+              value: ${DRONE_GITEA_URL}
+            - name: DRONE_SECRET
+              value: ${DRONE_SECRET}
+          volumeMounts:
+            - mountPath: /var/lib/drone
+              name: docker-socket
+        volumes:
+          - name: docker-socket
+            persistentVolumeClaim:
+              claimName: drone-repositories
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    name: ${DRONE_SERVICE_NAME}-agent
+  spec:
+    replicas: ${DRONE_AGENT_COUNT}
+    template:
+      metadata:
+        labels:
+          name: drone-agent
+      spec:
+        containers:
+        - name: drone-agent
+          image: "${DRONE_AGENT_IMAGE}:${DRONE_VERSION}"
+          imagePullPolicy: Always
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - mountPath: /var/run/docker.sock
+              name: docker-socket
+          env:
+            - name: DRONE_SERVER
+              value: "https://${DRONE_HOST}:9000"
+            - name: "DRONE_SECRET"
+              value: ${DRONE_SECRET}
+        volumes:
+          - name: docker-socket
+            persistentVolumeClaim:
+              claimName: drone-agent-repositories
+- kind: PersistentVolumeClaim
+  apiVersion: v1
+  metadata:
+    name: drone-repositories
+  spec:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: ${DRONE_VOLUME_CAPACITY}
+- kind: PersistentVolumeClaim
+  apiVersion: v1
+  metadata:
+    name: drone-agent-repositories
+  spec:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: ${DRONE_VOLUME_CAPACITY}
+parameters:
+- description: The Name of the Openshift service exposed for the Drone CI container.
+  name: DRONE_SERVICE_NAME
+  required: true
+  value: droneci
+  displayName: Drone CI Service Name
+- description: Custom hostname for http service route.
+  name: DRONE_HOST
+  required: true
+  value: DRONE_HOST
+- description: ex. http://YOUR_GIT_URL
+  displayName: The Gitea Service URL
+  name: DRONE_GITEA_URL
+  required: true
+  value: http://YOUR_GITEA_URL
+- description: Drone CI Internal Security Token.
+  name: DRONE_SECRET
+  from: '[a-zA-Z0-9]{105}'
+  generate: expression
+- displayName: Agent Replicas
+  name: DRONE_AGENT_COUNT
+  value: "3"
+- name: DRONE_IMAGE
+  displayName: Drone Image
+  description: The name and tag for the Drone Image to use
+  value: "docker.io/drone/drone"
+  required: true
+- name: DRONE_AGENT_IMAGE
+  displayName: Drone agent Image
+  description: The name and tag for the Drone Agent Image to use
+  value: "docker.io/drone/agent"
+  required: true
+- name: DRONE_VERSION
+  displayName: Drone Image Version Tag
+  description: The tag for the Drone Image to use
+  value: "0.8"
+  required: true
+- description: Volume space available for data, e.g. 512Mi, 2Gi
+  name: DRONE_VOLUME_CAPACITY
+  required: true
+  value: 1Gi
