@@ -1,0 +1,6 @@
+@echo off
+echo Build Start.....
+cmd.exe /c "cd ui/backend && npm install"
+cmd.exe /c "cd ui/backend && npm run build"
+cd api/core
+go-bindata-assetfs -pkg common -o common/bindata.go assets/...

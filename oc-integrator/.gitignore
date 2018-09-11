@@ -1,0 +1,31 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.o
+*.a
+*.sqlite
+
+# Test binary, build with `go test -c`
+*.test
+*.prof
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+.idea/
+
+go-api/.cache
+go-api/vendor/*
+go-api/assets/*
+!go-api/vendor/vendor.json
+
+.DS_Store
+vue-ui/node_modules/
+vue-ui/dist/
+npm-debug.log*
+vue-ui/yarn-debug.log*
+vue-ui/yarn-error.log*
+.vscode

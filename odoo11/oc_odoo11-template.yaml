@@ -1,0 +1,361 @@
+kind: Template
+apiVersion: template.openshift.io/v1
+metadata:
+  name: odoo11
+  annotations:
+    description: The Odoo 11 server
+    tags: instant-app,odoo,odoo11
+labels:
+  application: odoo11
+message: A Odoo 11 Server has been created in your project.
+objects:
+- kind: ServiceAccount
+  apiVersion: v1
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+
+- kind: Service
+  apiVersion: v1
+  metadata:
+    annotations:
+      description: Exposes the database server
+    name: ${APPLICATION_NAME}-postgresql
+  spec:
+    ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+    selector:
+      name: ${APPLICATION_NAME}-postgresql
+
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    annotations:
+      description: Defines how to deploy the database
+    name: ${APPLICATION_NAME}-postgresql
+  spec:
+    replicas: 1
+    selector:
+      name: ${APPLICATION_NAME}-postgresql
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          name: ${APPLICATION_NAME}-postgresql
+        name: ${APPLICATION_NAME}-postgresql
+      spec:
+        serviceAccountName: ${APPLICATION_NAME}
+        containers:
+        - env:
+          - name: POSTGRESQL_USER
+            value: ${DATABASE_USER}
+          - name: POSTGRESQL_PASSWORD
+            value: ${DATABASE_PASSWORD}
+          - name: POSTGRESQL_DATABASE
+            value: ${DATABASE_NAME}
+          - name: POSTGRESQL_MAX_CONNECTIONS
+            value: ${DATABASE_MAX_CONNECTIONS}
+          - name: POSTGRESQL_SHARED_BUFFERS
+            value: ${DATABASE_SHARED_BUFFERS}
+          - name: POSTGRESQL_ADMIN_PASSWORD
+            value: ${DATABASE_ADMIN_PASSWORD}
+          image: ' '
+          livenessProbe:
+            initialDelaySeconds: 30
+            tcpSocket:
+              port: 5432
+            timeoutSeconds: 1
+          name: postgresql
+          ports:
+          - containerPort: 5432
+          readinessProbe:
+            exec:
+              command:
+              - /bin/sh
+              - -i
+              - -c
+              - psql -h 127.0.0.1 -U ${POSTGRESQL_USER} -q -d ${POSTGRESQL_DATABASE} -c 'SELECT 1'
+            initialDelaySeconds: 5
+            timeoutSeconds: 1
+          resources:
+            limits:
+              memory: 512Mi
+          volumeMounts:
+          - mountPath: /var/lib/pgsql/data
+            name: odoo11-postgres-data
+        volumes:
+        - name: odoo11-postgres-data
+          persistentVolumeClaim:
+            claimName: odoo11-postgres-data
+    triggers:
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - postgresql
+        from:
+          kind: ImageStreamTag
+          name: postgresql:9.6
+          namespace: openshift
+      type: ImageChange
+    - type: ConfigChange
+
+- kind: Service
+  apiVersion: v1
+  metadata:
+    annotations:
+      description: The Odoo server's http port
+      service.alpha.openshift.io/dependencies: '[{"name":"${APPLICATION_NAME}-postgresql","namespace":"","kind":"Service"}]'
+    labels:
+      app: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+  spec:
+    ports:
+    - name: 8069-tcp
+      port: 8069
+      protocol: TCP
+      targetPort: 8069
+    - name: 8071-tcp
+      port: 8071
+      protocol: TCP
+      targetPort: 8071
+    selector:
+      app: ${APPLICATION_NAME}
+      deploymentconfig: ${APPLICATION_NAME}
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    labels:
+      app: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+  spec:
+    replicas: 1
+    selector:
+      app: ${APPLICATION_NAME}
+      deploymentconfig: ${APPLICATION_NAME}
+    template:
+      metadata:
+        labels:
+          app: ${APPLICATION_NAME}
+          deploymentconfig: ${APPLICATION_NAME}
+      spec:
+        serviceAccountName: ${APPLICATION_NAME}
+        containers:
+        - env:
+          - name: HOST
+            value: ${APPLICATION_NAME}-postgresql
+          - name: USER
+            value: ${DATABASE_USER}
+          - name: PASSWORD
+            value: ${DATABASE_PASSWORD}
+          image: "${ODOO_IMAGE}:${ODOO_VERSION}"
+          imagePullPolicy: Always
+          name: ${APPLICATION_NAME}
+          ports:
+          - containerPort: 8069
+            protocol: TCP
+          - containerPort: 8071
+            protocol: TCP
+          resources: {}
+          volumeMounts:
+          - name: odoo11-datastore
+            mountPath: /home/odoo/data
+          - name: odoo-config
+            mountPath: /etc/odoo
+          readinessProbe:
+              httpGet:
+                path: /
+                port: 8069
+                scheme: HTTP
+              initialDelaySeconds: 5
+              timeoutSeconds: 1
+              periodSeconds: 20
+              successThreshold: 1
+              failureThreshold: 3
+          livenessProbe:
+              httpGet:
+                path: /
+                port: 8069
+                scheme: HTTP
+              initialDelaySeconds: 30
+              timeoutSeconds: 1
+              periodSeconds: 10
+              successThreshold: 1
+              failureThreshold: 3
+        restartPolicy: Always
+        securityContext: {}
+        volumes:
+        - name: odoo11-datastore
+          persistentVolumeClaim:
+            claimName: odoo11-datastore
+        - name: odoo-config
+          configMap:
+            name: odoo-config
+            items:
+              - key: odoo.conf
+                path: odoo.conf
+    test: false
+    triggers:
+    - type: ConfigChange
+
+- kind: PersistentVolumeClaim
+  apiVersion: v1
+  metadata:
+    name: odoo11-datastore
+  spec:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: ${ODOO11_VOLUME_CAPACITY}
+
+- kind: PersistentVolumeClaim
+  apiVersion: v1
+  metadata:
+    name: odoo11-postgres-data
+  spec:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: ${DB_VOLUME_CAPACITY}
+
+- kind: Route
+  apiVersion: v1
+  id: ${APPLICATION_NAME}-http
+  metadata:
+    annotations:
+      description: Route for application's http service.
+    labels:
+      app: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+  spec:
+    host: ${HOSTNAME}
+    to:
+      name: ${APPLICATION_NAME}
+
+- kind: ConfigMap
+  apiVersion: v1
+  metadata:
+    name: odoo-config
+  data:
+    odoo.conf: |
+      [options]
+      admin_passwd = ${ADMIN_PASSWD}
+      addons_path = /home/odoo/data/odoo/addons
+      data_dir = /home/odoo/data
+      db_name = ${DATABASE_NAME}
+      db_host = ${APPLICATION_NAME}-postgresql
+      db_user = ${DATABASE_USER}
+      db_password = ${DATABASE_PASSWORD}
+      
+      csv_internal_sep = ,
+      db_maxconn = 64
+      db_template = template1
+      dbfilter = .*
+      debug_mode = False
+      demo = {}
+      email_from = False
+      import_partial =
+      limit_memory_hard = 2684354560
+      limit_memory_soft = 2147483648
+      limit_request = 8193
+      limit_time_cpu = 60
+      limit_time_real = 120
+      list_db = True
+      log_db = False
+      log_handler = [':INFO']
+      log_level = info
+      logrotate = False
+      longpolling_port = 8072
+      max_cron_threads = 1
+      osv_memory_age_limit = 1.0
+      osv_memory_count_limit = False
+      pg_path = None
+      pidfile = None
+      proxy_mode = False
+      reportgz = False
+      secure_cert_file = server.cert
+      secure_pkey_file = server.pkey
+      server_wide_modules = None
+      smtp_password = False
+      smtp_port = 25
+      smtp_server = localhost
+      smtp_ssl = False
+      smtp_user = False
+      syslog = False
+      test_commit = False
+      test_enable = False
+      test_file = False
+      test_report_directory = False
+      timezone = False
+      translate_modules = ['all']
+      unaccent = False
+      without_demo = True
+      workers = 0
+      xmlrpc = True
+      # xmlrpc_interface =   # Dynamically set
+      # xmlrpc_port = # Dynamically set
+      xmlrpcs = False
+      xmlrpcs_interface =
+      xmlrpcs_port = 8070
+parameters:
+- description: The name for the application.
+  name: APPLICATION_NAME
+  required: true
+  value: odoo11
+- description: 'Custom hostname for http service route.  Leave blank for default hostname, e.g.: <application-name>-<project>.<default-domain-suffix>'
+  name: HOSTNAME
+  required: true
+- description: Volume space available for data, e.g. 512Mi, 2Gi
+  name: ODOO11_VOLUME_CAPACITY
+  required: true
+  value: 1Gi
+- description: Volume space available for postregs data, e.g. 512Mi, 2Gi
+  name: DB_VOLUME_CAPACITY
+  required: true
+  value: 1Gi
+- displayName: Database Username
+  from: odoo
+  value: odoo
+  name: DATABASE_USER
+- displayName: Database Password
+  from: '[a-zA-Z0-9]{8}'
+  value: odoo11
+  name: DATABASE_PASSWORD
+- displayName: Admin Password
+  from: '[a-zA-Z0-9]{8}'
+  value: odoo11
+  name: ADMIN_PASSWD
+- displayName: Database Name
+  name: DATABASE_NAME
+  value: odoo11
+- displayName: Database Admin Password
+  from: '[a-zA-Z0-9]{8}'
+  generate: expression
+  name: DATABASE_ADMIN_PASSWORD
+- displayName: Maximum Database Connections
+  name: DATABASE_MAX_CONNECTIONS
+  value: "100"
+- displayName: Shared Buffer Amount
+  name: DATABASE_SHARED_BUFFERS
+  value: 12MB
+- name: ODOO_IMAGE
+  displayName: Odoo Image
+  description: The name and tag for the Odoo Image to use
+  value: "docker.io/library/odoo"
+  required: true
+- name: ODOO_VERSION
+  displayName: Odoo Image Version Tag
+  description: The tag for the Odoo Image to use
+  value: "11"
+  required: true
