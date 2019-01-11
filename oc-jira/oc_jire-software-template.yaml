@@ -1,0 +1,174 @@
+kind: Template
+apiVersion: template.openshift.io/v1
+metadata:
+  name: jira-software
+  annotations:
+    description: The Jira Softare Application.
+    tags: instant-app,jira,jira-software
+labels:
+  application: jira_software
+message: A Jira Software Application has been created in your project.
+objects:
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    labels:
+      app: ${JIRA_SOFTWARE_SERVICE_NAME}
+    name: ${JIRA_SOFTWARE_SERVICE_NAME}
+  spec:
+    replicas: 1
+    selector:
+      app: ${JIRA_SOFTWARE_SERVICE_NAME}
+    strategy:
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        labels:
+          app: ${JIRA_SOFTWARE_SERVICE_NAME}
+          name: ${JIRA_SOFTWARE_SERVICE_NAME}
+      spec:
+        initContainers:
+        - name: chown-data-volume
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          command: ["chown", "2:2", "-R", "/var/atlassian/jira"]
+          volumeMounts:
+          - name: data
+            mountPath: /var/atlassian/jira
+        containers:
+        - name: ${JIRA_SOFTWARE_SERVICE_NAME}
+          image: "${JIRA_SOFTWARE_IMAGE}:${JIRA_SOFTWARE_IMAGE_VERSION}"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: X_PROXY_NAME
+              value: ${REVERSE_PROXY_HOST}
+            - name: X_PROXY_PORT
+              value: ${REVERSE_PROXY_PORT}
+            - name: X_PROXY_SCHEME
+              value: ${REVERSE_PROXY_SCHEME}
+            - name: JAVA_OPTS
+              value: ${JAVA_OPTS}
+          ports:
+          - containerPort: ${JIRA_CONTAINER_PORT}
+            protocol: TCP
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 3
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 3
+          volumeMounts:
+            - mountPath: /var/atlassian/jira
+              name: data
+        volumes:
+          - name: data
+            persistentVolumeClaim:
+              claimName: ${JIRA_SOFTWARE_SERVICE_NAME}-pvc
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: ${JIRA_SOFTWARE_SERVICE_NAME}
+    labels:
+      app: ${JIRA_SOFTWARE_SERVICE_NAME}
+  spec:
+    type: LoadBalancer
+    ports:
+      - port: ${JIRA_SERVICE_PORT}
+        targetPort: http
+        protocol: TCP
+        name: http
+    selector:
+      app: ${JIRA_SOFTWARE_SERVICE_NAME}
+- kind: Route
+  apiVersion: v1
+  id: ${JIRA_SOFTWARE_SERVICE_NAME}-http
+  metadata:
+    annotations:
+      description: Route for Drone CI http service.
+    labels:
+      app: ${JIRA_SOFTWARE_SERVICE_NAME}
+    name: ${JIRA_SOFTWARE_SERVICE_NAME}
+  spec:
+    host: ${JIRA_SOFTWARE_HOST}
+    port:
+      targetPort: ${JIRA_SERVICE_PORT}-tcp
+    tls:
+      insecureEdgeTerminationPolicy: Redirect
+      termination: edge
+    to: 
+      kind: Service
+      name: ${JIRA_SOFTWARE_SERVICE_NAME}
+- kind: PersistentVolumeClaim
+  apiVersion: v1
+  metadata:
+    name: ${JIRA_SOFTWARE_SERVICE_NAME}-pvc
+    labels:
+      app: ${JIRA_SOFTWARE_SERVICE_NAME}
+  spec:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: ${JIRA_SOFTWARE_VOLUME_CAPACITY}
+    storageClassName: ""
+parameters:
+- description: The Name of the Openshift service exposed for the Jira Software container.
+  name: JIRA_SOFTWARE_SERVICE_NAME
+  required: true
+  value: jira-software
+  displayName: Jira Software Service Name
+- description: Custom hostname for http service route.
+  name: JIRA_SOFTWARE_HOST
+  required: true
+  value: "jira.cenoq.com"
+- description: Custom service port for http service route.
+  name: JIRA_SERVICE_PORT
+  required: true
+  value: "8080"
+- description: Custom container port for http service route.
+  name: JIRA_CONTAINER_PORT
+  required: true
+  value: "8080"
+- description: Volume space available for data, e.g. 512Mi, 2Gi
+  name: JIRA_SOFTWARE_VOLUME_CAPACITY
+  required: true
+  value: 1Gi
+- name: JIRA_SOFTWARE_IMAGE
+  displayName: Jira Software Image
+  description: The name and tag for the Jira Software Image to use
+  value: "cptactionhank/atlassian-jira-software"
+  required: true
+- name: JIRA_SOFTWARE_IMAGE_VERSION
+  displayName: Jira Software Image Version Tag
+  description: The tag for the Jira Software Image to use
+  value: "7.10.1"
+  required: true
+- description: Custom reverse proxy host.
+  name: REVERSE_PROXY_HOST
+  required: true
+  value: "jira.cenoq.com"
+- description: Custom revers proxy port.
+  name: REVERSE_PROXY_PORT
+  required: true
+  value: "80"
+- description: Custom revrse proxy shceme.
+  name: REVERSE_PROXY_SCHEME
+  required: true
+  value: "http"
+- description: Custom hostname for http service route.
+  name: JAVA_OPTS
+  required: true
+  value: "-Xmx2048 -Xms4096 -XX:MaxMetaspaceSize=512m -XX:MaxDirectMemorySize=10m"

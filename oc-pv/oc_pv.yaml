@@ -1,0 +1,23 @@
+kind: Template
+apiVersion: template.openshift.io/v1
+metadata:
+  name: project-pv
+  annotations:
+    description: The PV.
+    tags: instant-app,pv
+labels:
+  application: project_pv
+message: A PV has been created in your project.
+objects:
+- kind: PersistentVolume
+  apiVersion: v1
+  metadata:
+    name: pv0001
+  spec:
+    capacity:
+      storage: 5Gi
+    accessModes:
+      - ReadWriteOnce
+    persistentVolumeReclaimPolicy: Recycle
+    hostPath:
+      path: "/tmp/pv0001"
